@@ -1,0 +1,57 @@
+CREATE OR REPLACE FUNCTION "analysis_business_list"."tiaoshu_area_v2"(table_name varchar)
+  RETURNS "pg_catalog"."void" AS $BODY$
+DECLARE
+r record;
+k record;
+s_num int8;
+l_num int8;
+diff int8;
+type_s varchar;
+mysql text;
+areaid varchar;
+BEGIN
+FOR k IN EXECUTE 'SELECT DISTINCT shop_type from '||quote_ident(table_name) LOOP
+
+		IF k.shop_type = '平台型' THEN type_s = 'plat';
+		ELSIF k.shop_type = '流通型' THEN type_s = 'liutong';
+		ELSIF k.shop_type = '生产型' THEN type_s = 'shengchan';
+		ELSE type_s = 'fuwu';
+		END IF;
+
+		FOR r IN SELECT id,jibie from wangshang_list_diff_copy where jibie in('2','3') LOOP
+			IF r.jibie = '3' THEN areaid = 'third_areaid';
+			ELSE areaid = 'second_areaid';
+			END IF;    
+
+			mysql:= 'select count(*) from '||quote_ident(table_name)||' where cast('||areaid||' as varchar) ='||quote_literal(r.id)||' and shop_type ='||quote_literal(k.shop_type);
+			EXECUTE mysql into l_num;
+			mysql:= 'select '||quote_ident(type_s) ||' from wangshang_list_diff_copy where cast(id as varchar) = '||quote_literal(r.id);
+			EXECUTE mysql into s_num;
+			diff:=l_num-s_num;
+
+			IF diff>0 THEN 
+			EXECUTE 'delete from '||quote_ident(table_name)||' where id in (select id from '||quote_ident(table_name)||' where cast('||areaid||' as varchar)='||quote_literal(r.id)||' and shop_type= '||quote_literal(k.shop_type)||' order by level asc limit '||diff||')';
+			end IF;
+			EXECUTE 'update wangshang_list_diff_copy set '||type_s||'_diff = '||quote_literal(diff)||' where cast(id as varchar) ='||quote_literal(r.id);
+			
+		end loop;
+
+--处理上下级关系的调平，前提是下级区域已经调平
+		mysql:= 'select count(*) from '||quote_ident(table_name)||' where first_areaid =15 and shop_type ='||quote_literal(k.shop_type);
+		EXECUTE mysql into l_num;
+		mysql:= 'select '||quote_ident(type_s) ||' from wangshang_list_diff_copy where id = 15';
+		EXECUTE mysql into s_num;
+		diff:=l_num-s_num;
+		
+		IF diff>0 THEN
+		EXECUTE 'delete from '||quote_ident(table_name)||' where id in (select id from '||quote_ident(table_name)||' where first_areaid = 15 and (second_areaid != 1508 and third_areaid  not in(150102,150502)) and shop_type= '||quote_literal(k.shop_type)||' order by level asc limit '||diff||')';
+    end IF;
+		EXECUTE 'update wangshang_list_diff_copy set '||type_s||'_diff = '||quote_literal(diff)||' where id = 15';
+		
+end loop;
+end
+$BODY$
+  LANGUAGE 'plpgsql' VOLATILE COST 100
+;
+
+ALTER FUNCTION "analysis_business_list"."tiaoshu_area_v2"(table_name varchar) OWNER TO "daixin";

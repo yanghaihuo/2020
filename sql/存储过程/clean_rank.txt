@@ -1,0 +1,138 @@
+CREATE OR REPLACE FUNCTION "analysis_business_list"."clean_rank_v1"(table_name varchar)
+  RETURNS "pg_catalog"."void" AS $BODY$
+begin
+EXECUTE 'update '||quote_ident(table_name)||' set platform = 
+case when platform in (''淘宝'',''淘宝生态农业'') then ''淘宝''
+		 when platform in (''企业店铺'',''企业卖家'') then ''企业店铺''
+		 when platform in (''天猫'',''天猫国际'') then ''天猫''
+		 else platform
+		 end';
+
+--调整url
+EXECUTE 'update '||quote_ident(table_name)||' set first_cat = main_cat where (first_cat is null or first_cat='''') and main_cat is not null';
+EXECUTE 'update '||quote_ident(table_name)||' set url=''http:''||url where url ~ ''^//www''';
+EXECUTE 'update '||quote_ident(table_name)||' set url=''http://''||url where url !~ ''^http''';
+
+--调整url--京东、阿里巴巴、一号店
+EXECUTE 'update '||quote_ident(table_name)||' set url=''https://mall.jd.com/index-'' || shop_id || ''.html'' where platform=''京东''';
+EXECUTE 'update '||quote_ident(table_name)||' set url=replace(url,''showLicence'',''index'') where platform like ''%一号店%''';
+EXECUTE 'update '||quote_ident(table_name)||' set url=''http://shop'' || substring(url from ''\d*$'') || ''.taobao.com''
+where platform in (''淘宝'',''天猫'',''企业店铺'') and url ~ ''m.taobao''';    
+-- 地域处理   
+EXECUTE 'update '||quote_ident(table_name)||' set second_areaid = first_areaid*100+99 where second_areaid is NULL';
+EXECUTE 'update '||quote_ident(table_name)||' set third_areaid = second_areaid*100+99 where third_areaid is NULL';
+    
+-- 地域名规范  
+EXECUTE 'update '||quote_ident(table_name)||' a set third_addr = b.third_abbr,
+first_addr = b.first_abbr,second_addr = b.second_abbr,second_areaid = b.second_areaid,first_areaid = b.first_areaid FROM area_match b where a.third_areaid = b.third_areaid';
+
+--更新等级
+--7级
+EXECUTE 'update '||quote_ident(table_name)||' set rank_grade=7 where shop_type=''平台型''';
+EXECUTE 'update '||quote_ident(table_name)||' set rank_grade=7 where trade_level>1000000 and platform in (''飞猪酒店'',''一品威客'',''时间财富'') 
+and rank_grade is null and status=1'; --@@月交易额停抓平台
+EXECUTE 'update '||quote_ident(table_name)||' set rank_grade=7 where trade_level>1000000
+and platform in (''淘宝'',''企业店铺'',''天猫'',''天虎云商'',''微店'',''美团网'',''百度糯米'',''大众点评'',''饿了么星选'',''猪八戒'',''艺龙酒店'') 
+and rank_grade is null';--@@月交易额常规平台
+EXECUTE 'update '||quote_ident(table_name)||' set rank_grade=7 where trade_level>100000
+and platform in (''京东'',''一号店'') and rank_grade is null and status=1'; --@@总评论数
+EXECUTE 'update '||quote_ident(table_name)||' set rank_grade=7 where trade_level>10000
+and platform in (''国美'',''苏宁易购'',''途家酒店'',''去哪儿酒店'',''同程酒店'',''携程酒店'',''欣欣酒店'')  
+and rank_grade is null'; --@@常规平台月评论数
+EXECUTE 'update '||quote_ident(table_name)||' set rank_grade=7 where trade_level>10000
+and platform in (''途牛酒店'',''马蜂窝酒店'')  
+and rank_grade is null and status=1'; --@@停抓平台月评论数
+--EXECUTE 'update '||quote_ident(table_name)||' set rank_grade=7 where special_level>15
+--and platform in (''阿里巴巴'',''慧聪'')  and rank_grade is null and status=1';--@@B2B
+--6级
+EXECUTE 'update '||quote_ident(table_name)||' set rank_grade=6 where shop_type=''平台型'' and trade_level>0 and rank_grade is null and status=1'; 
+EXECUTE 'update '||quote_ident(table_name)||' set rank_grade=6 where trade_level>100000 
+and platform in (''淘宝'',''企业店铺'',''天猫'',''天虎云商'',''微店'',''美团网'',''百度糯米'',''大众点评'',''饿了么星选'',''猪八戒'',''艺龙酒店'') 
+and rank_grade is null'; --@@常规月交易额
+EXECUTE 'update '||quote_ident(table_name)||' set rank_grade=6 where trade_level>100000 
+and platform in (''飞猪酒店'',''一品威客'',''时间财富'') 
+and rank_grade is null and status=1'; --@@停抓平台月交易额
+EXECUTE 'update '||quote_ident(table_name)||' set rank_grade=6 where trade_level>10000
+and platform in (''京东'',''一号店'')  and rank_grade is null and status=1'; --@@总评论数
+EXECUTE 'update '||quote_ident(table_name)||' set rank_grade=6 where shop_name ~ ''旗舰店''
+and platform in (''京东'',''一号店'',''国美'',''苏宁易购'')  and rank_grade is null and status=1'; --@@重点平台旗舰店/特殊馆
+EXECUTE 'update '||quote_ident(table_name)||' set rank_grade=6 where (shop_name ~ ''中国特产'' or shop_name ~ ''中华特色馆'')
+and platform in (''京东'',''一号店'',''苏宁易购'')  and rank_grade is null and status=1';--@@重点平台特殊馆
+EXECUTE 'update '||quote_ident(table_name)||' set rank_grade=6 where trade_level>1000
+and platform in (''国美'',''苏宁易购'',''途家酒店'',''去哪儿酒店'',''同程酒店'',''携程酒店'',''欣欣酒店'')  
+and rank_grade is null'; --@@常规平台月评论数
+EXECUTE 'update '||quote_ident(table_name)||' set rank_grade=6 where trade_level>1000
+and platform in (''途牛酒店'',''马蜂窝酒店'')  
+and rank_grade is null and status=1'; --@@停抓平台月评论数
+--EXECUTE 'update '||quote_ident(table_name)||' set rank_grade=6 where special_level>5
+--and platform in (''阿里巴巴'',''慧聪'')  and rank_grade is null and status=1';--@@B2B
+--5级
+EXECUTE 'update '||quote_ident(table_name)||' set rank_grade=5 where trade_level>10000 
+and platform in (''淘宝'',''企业店铺'',''天猫'',''天虎云商'',''微店'',''美团网'',''百度糯米'',''大众点评'',''饿了么星选'',''猪八戒'',''艺龙酒店'') 
+and rank_grade is null';--@@常规平台月评论数
+EXECUTE 'update '||quote_ident(table_name)||' set rank_grade=5 where trade_level>10000 
+and platform in (''飞猪酒店'',''一品威客'',''时间财富'') 
+and rank_grade is null and status=1';--@@停抓平台月评论数
+EXECUTE 'update '||quote_ident(table_name)||' set rank_grade=5 where trade_level>1000
+and platform in (''京东'',''一号店'')  and rank_grade is null and status=1'; --@@总评论数
+EXECUTE 'update '||quote_ident(table_name)||' set rank_grade=5 where trade_level>100
+and platform in (''国美'',''苏宁易购'',''途家酒店'',''去哪儿酒店'',''同程酒店'',''携程酒店'',''欣欣酒店'')  
+and rank_grade is null';--@@常规月评论数
+EXECUTE 'update '||quote_ident(table_name)||' set rank_grade=5 where trade_level>100
+and platform in (''途牛酒店'',''马蜂窝酒店'') 
+and rank_grade is null and status=1';--@@停抓评论数
+--4级
+EXECUTE 'update '||quote_ident(table_name)||' set rank_grade=4 where shop_type=''平台型'' and status=1 and rank_grade is null'; 
+--EXECUTE 'update '||quote_ident(table_name)||' set rank_grade=4 where special_level>0
+--and platform in (''阿里巴巴'',''慧聪'')  and rank_grade is null and status=1';
+--3级
+EXECUTE 'update '||quote_ident(table_name)||' set rank_grade=3 where trade_level>0 and 
+platform in (''京东'',''一号店'',''淘宝'',''企业店铺'',''国美'',''苏宁易购'',''天猫'',''天虎云商'',''途家酒店'',''去哪儿酒店'',''同程酒店'',''携程酒店'',''欣欣酒店'',''微店'',''美团网'',''百度糯米'',''大众点评'',''饿了么星选'',''猪八戒'') 
+and rank_grade is null';--@@常规实物服务有交易
+EXECUTE 'update '||quote_ident(table_name)||' set rank_grade=3 where trade_level>0 and 
+platform in (''途牛酒店'',''艺龙酒店'',''马蜂窝酒店'',''飞猪酒店'',''一品威客'',''时间财富'') 
+and rank_grade is null and status=1';--@@停抓实物服务有交易
+--EXECUTE 'update '||quote_ident(table_name)||' set rank_grade=3 where platform in (''阿里巴巴'',''慧聪'')  and rank_grade is null and status=1';--@@B2B/4522
+--2级
+EXECUTE 'update '||quote_ident(table_name)||' set rank_grade=2 where
+platform in (''京东'',''一号店'',''淘宝'',''企业店铺'',''国美'',''苏宁易购'',''天猫'',''天虎云商'',''途家酒店'',''去哪儿酒店'',''同程酒店'',''携程酒店'',''欣欣酒店'',''微店'',''美团网'',''百度糯米'',''大众点评'',''饿了么星选'',''猪八戒'',''途牛酒店'',''艺龙酒店'',''马蜂窝酒店'',''飞猪酒店'',''一品威客'',''时间财富'') 
+and rank_grade is null and status=1'; --@@实物服务status为1
+--1级
+EXECUTE 'update '||quote_ident(table_name)||' set rank_grade=1 where rank_grade is null or platform in(''美团外卖'',''饿了么'',''阿里巴巴'',''慧聪'')';
+
+--更新平台顺序
+
+EXECUTE 'update '||quote_ident(table_name)||' set rank_platform=10  where shop_type=''平台型''';
+EXECUTE 'update '||quote_ident(table_name)||' set rank_platform=9  where platform in (''京东'',''天猫'')';
+EXECUTE 'update '||quote_ident(table_name)||' set rank_platform=8  where platform in(''国美'',''苏宁易购'',''一号店'')';
+EXECUTE 'update '||quote_ident(table_name)||' set rank_platform=7  where platform in (''淘宝'',''企业店铺'',''微店'',''天虎云商'')';
+EXECUTE 'update '||quote_ident(table_name)||' set rank_platform=6  where platform = ''猪八戒''';
+EXECUTE 'update '||quote_ident(table_name)||' set rank_platform=5  where platform in (''美团网'',''百度糯米'',''大众点评'',''饿了么星选'')';
+EXECUTE 'update '||quote_ident(table_name)||' set rank_platform=4  where platform in (''去哪儿酒店'',''携程酒店'',''同程酒店'',''欣欣酒店'',''途家酒店'')';
+EXECUTE 'update '||quote_ident(table_name)||' set rank_platform=3  where platform in (''艺龙酒店'',''飞猪酒店'',''马蜂窝酒店'',''途牛酒店'',''一品威客'',''时间财富'')';
+EXECUTE 'update '||quote_ident(table_name)||' set rank_platform=2  where platform in (''阿里巴巴'',''慧聪'')';
+EXECUTE 'update '||quote_ident(table_name)||' set rank_platform=1  where platform in (''美团外卖'',''饿了么'')';
+
+--平台内部非交易字段排序
+
+EXECUTE 'update '||quote_ident(table_name)||' set special_level=2  where (shop_name ~ ''中国特产'' or shop_name ~ ''中华特色馆'')
+and platform in (''京东'',''一号店'',''苏宁易购'')';
+EXECUTE 'update '||quote_ident(table_name)||' set special_level=1  where shop_name ~ ''旗舰店''
+and platform in (''京东'',''一号店'',''苏宁易购'',''国美'')';
+
+--自建平台内部排序
+EXECUTE 'update '||quote_ident(table_name)||' set special_level=1  
+from gather_kind.ir_platform_2019 as b 
+where '||quote_ident(table_name)||'.shop_type=''平台型''
+and '||quote_ident(table_name)||'.shop_id=cast(b.id as varchar) and b.mark ~ ''对接''';
+
+--最终排序字段 
+EXECUTE 'update '||quote_ident(table_name)||'
+set level=(rank_grade*10000000+rank_platform*100000+COALESCE(special_level,0)*1000+COALESCE(trade_level,0)/100000000)';
+
+end;
+$BODY$
+  LANGUAGE 'plpgsql' VOLATILE COST 100
+;
+
+ALTER FUNCTION "analysis_business_list"."clean_rank_v1"(table_name varchar) OWNER TO "yanghai";

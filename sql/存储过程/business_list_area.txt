@@ -1,0 +1,237 @@
+CREATE OR REPLACE FUNCTION "analysis_business_list"."business_list_area_v1"(id varchar, label int4, q int4)
+  RETURNS "pg_catalog"."void" AS $BODY$
+
+DECLARE
+mysql text;
+table_name text;
+areaid varchar;
+first_month varchar;
+second_month varchar;
+third_month varchar;
+
+BEGIN
+		--RAISE NOTICE 'begin%';
+		--RAISE NOTICE 'begin%', quantity;
+		-- 更改表bt_wangshang_list_220581_mhk_2019q1    220581    month_money  month_amount   state  
+		table_name:= 'bt_ws_list0_2019q'||q||'_'||id;
+		mysql:= 'CREATE TABLE '||quote_ident(table_name)||'(
+		"id" serial8,
+		"shop_id" varchar(255),
+		"shop_name" varchar(255),
+		"platform_id" int4,
+		"platform" varchar(50),
+		"main_cat" text,
+		"first_cat" text,
+		"shop_type" varchar(50),
+		"url" varchar(255),
+		"address" varchar(255),
+		"first_addr" varchar(255),
+		"second_addr" varchar(255),
+		"third_addr" varchar(255),
+		"first_areaid" int4,
+		"second_areaid" int4,
+		"third_areaid" int4,
+		"rank_grade" int2,
+		"rank_platform" int4,
+		"special_level" int4,
+		"trade_level" double precision,
+		"level" double precision,
+		"status" int2)';
+
+		execute mysql;
+
+    IF q=4 THEN first_month:='10';second_month:='11';third_month:='12';
+    ELSE
+    first_month:='0'||cast(q*3-2 as varchar);
+    second_month:='0'||cast(q*3-1 as varchar);  
+    third_month:='0'||cast(q*3 as varchar);    
+    END IF; 
+ 
+    if label = 1 then areaid := 'first_areaid';
+    elsif label =2 then areaid := 'second_areaid';
+    else areaid :='third_areaid'; 
+    end if;
+		------------------------------------------------数据导入-------------------------------------------------------
+
+		--插入淘宝的数据
+		mysql:= 'insert into '||quote_ident(table_name)||' 
+		(shop_id,shop_name,platform,main_cat,first_cat,shop_type,url,address,first_addr,second_addr,third_addr,first_areaid,second_areaid,
+		third_areaid,status)
+		select shop_id,shop_name,type,main_cat,first_cat,''流通型'' as shop_type,url,address,first_addr,second_addr,third_addr,
+		cast(first_areaid as int4),cast(second_areaid as int4),cast(third_areaid as int4),status
+		from analysis_taobao.bt_taobao_shop_china_all 
+		where analysis_taobao.bt_taobao_shop_china_all.'||areaid||'='||id;
+		execute mysql;
+
+
+		mysql:= 'update '||quote_ident(table_name)||' set trade_level=b.month_money_'||third_month||'  
+		from gather_taobao.ir_taobao_shop_trade_china_2019 as b 
+		where '||quote_ident(table_name)||'.shop_id=CAST(b.shop_id as varchar)'; 
+		execute mysql;
+
+		--插入阿里数据，状态为1的
+
+		 mysql:= 'insert into '||quote_ident(table_name)||'
+		(shop_id,shop_name,platform,main_cat,first_cat,shop_type,url,address,first_addr,second_addr,third_addr,first_areaid,second_areaid,third_areaid,special_level,trade_level,status)
+		select shop_id,shop_name,''阿里巴巴'' as platform,main_prod,first_cat,shop_type2,url,address,first_addr,second_addr,third_addr,first_areaid,second_areaid,third_areaid,ali_level,money_2017,status    --是否需要更改
+		from gather_b2b_bulk.ir_1688_shop_trade_china_2019 where gather_b2b_bulk.ir_1688_shop_trade_china_2019.'||areaid||'='||id||' and gather_b2b_bulk.ir_1688_shop_trade_china_2019.status=1 order by ali_level desc';
+		execute mysql; 
+
+		--插入慧聪的数据，不是生产型状态只取1，生产型全取 
+
+
+			mysql:= 'insert into '||quote_ident(table_name)||'
+	(shop_id,shop_name,platform,main_cat,first_cat,shop_type,url,address,first_addr,second_addr,third_addr,first_areaid,second_areaid,third_areaid,special_level,status)
+	select shop_id,shop_name,''慧聪'' as platform,main_prod,first_cat,shop_type2,url,address,first_addr,second_addr,third_addr,
+	cast(first_areaid as int4),cast(second_areaid as int4),cast(third_areaid as int4),LEVEL,status
+	from gather_b2b_bulk.ir_hc360_shop_trade_china_2019  
+	where gather_b2b_bulk.ir_hc360_shop_trade_china_2019.'||areaid||'='''||id|| 
+	''' and gather_b2b_bulk.ir_hc360_shop_trade_china_2019.status=1 
+	and gather_b2b_bulk.ir_hc360_shop_trade_china_2019.shop_type2!=''生产型'' union 
+	select shop_id,shop_name,''慧聪'' as platform,main_prod,first_cat,shop_type2,url,address,first_addr,second_addr,third_addr,
+	cast(first_areaid as int4),cast(second_areaid as int4),cast(third_areaid as int4),LEVEL,status
+	from gather_b2b_bulk.ir_hc360_shop_trade_china_2019
+	where gather_b2b_bulk.ir_hc360_shop_trade_china_2019.'||areaid||'='''||id||''' and gather_b2b_bulk.ir_hc360_shop_trade_china_2019.shop_type2=''生产型''';
+
+		 execute mysql;
+
+
+		--重点实物平台（京东、一号店）
+
+		 mysql:= 'insert into '||quote_ident(table_name)||'(shop_id,shop_name,platform,main_cat,first_cat,shop_type,url,address,first_addr,second_addr,third_addr,first_areaid,second_areaid,third_areaid,trade_level,status)
+		select shop_id,shop_name,''京东'' as platform,main_cat,first_cat,''流通型'' as shop_type,url,address,first_addr,second_addr,third_addr,first_areaid,second_areaid,third_areaid,com_num,status
+		from gather_kind.ir_jd_shop_trade_china_2019 where '||areaid||'='||id||' and status=1 
+		UNION
+		select shop_id,shop_name,''一号店'' as platform,main_cat,first_cat,''流通型'' as shop_type,url,address,first_addr,second_addr,third_addr,first_areaid,second_areaid,third_areaid,com_num,status
+		from gather_kind.ir_yhd_shop_trade_china_2019 where '||areaid||'='||id||' and status=1';
+		   execute mysql;
+
+		--天虎云商、微店、苏宁易购、国美、猪八戒
+
+		 mysql:= 'insert into '||quote_ident(table_name)||' (shop_id,shop_name,platform,main_cat,first_cat,shop_type,url,address,first_addr,second_addr,third_addr,first_areaid,second_areaid,third_areaid,trade_level,status)
+		select shop_id,shop_name,''天虎云商'' as platform,main_cat,first_cat,''流通型'' as shop_type,url,address,first_addr,second_addr,third_addr,first_areaid,second_areaid,third_areaid,month_money_'||third_month||',status
+		from gather_kind.ir_tyfo_shop_trade_china_2019 where '||areaid||'='||id||' and status=1
+		union
+		select shop_id,shop_name,''微店'' as platform,main_cat,first_cat,''流通型'' as shop_type,url,address,first_addr,second_addr,third_addr,first_areaid,second_areaid,third_areaid,month_money_'||third_month||',status
+		from gather_kind.ir_weidian_shop_trade_china_2019 where '||areaid||'='||id||' and status=1';
+		execute mysql;
+
+		mysql:= 'insert into '||quote_ident(table_name)||'(shop_id,shop_name,platform,main_cat,first_cat,shop_type,url,address,first_addr,second_addr,third_addr,first_areaid,second_areaid,third_areaid,trade_level,status)
+		select shop_id,shop_name,''苏宁易购'' as platform,main_cat,first_cat,''流通型'' as shop_type,url,address,first_addr,second_addr,third_addr,first_areaid,second_areaid,third_areaid,COALESCE(month_amount_'||first_month||',0)+COALESCE(month_amount_'||second_month||',0)+COALESCE(month_amount_'||third_month||',0)as amount,status
+		from gather_kind.ir_suning_shop_trade_china_2019  where '||areaid||'='||id||'  
+		UNION
+		select shop_id,shop_name,''国美'' as platform,main_cat,first_cat,''流通型'' as shop_type,url,address,first_addr,second_addr,third_addr,first_areaid,second_areaid,third_areaid,COALESCE(month_amount_'||first_month||',0)+COALESCE(month_amount_'||second_month||',0)+COALESCE(month_amount_'||third_month||',0)as amount,status
+		from gather_kind.ir_guomei_shop_trade_china_2019 where '||areaid||'='||id||' and status=1';
+		execute mysql;
+
+		mysql:= 'insert into '||quote_ident(table_name)||'(shop_id,shop_name,platform,main_cat,first_cat,shop_type,url,address,first_addr,second_addr,third_addr,first_areaid,second_areaid,third_areaid,trade_level,status)
+		select cast(shop_id as int8),name,''猪八戒'' as platform,ability1,''其他服务'',''服务型'' as shop_type,url,address,first_addr,second_addr,
+		third_addr,cast(first_areaid as int4),cast(second_areaid as int4),cast(third_areaid as int4),near_money_03 as money,state
+		from gather_service.ir_zbj_shop_china_2019 where gather_service.ir_zbj_shop_china_2019.'||areaid||'='||id;
+		execute mysql;
+
+		--插入团购平台  
+
+		mysql:= 'insert into '||quote_ident(table_name)||'(shop_id,shop_name,platform,main_cat,first_cat,shop_type,url,address,first_addr,second_addr,third_addr,first_areaid,second_areaid,third_areaid,trade_level,status)
+		select cast(shop_id as varchar),shop_name,''美团网'' as platform,main_cat,first_cat,''流通型'' as shop_type,url,address,first_addr,second_addr,third_addr,first_areaid,second_areaid,third_areaid,COALESCE('||first_month||',0)+COALESCE('||second_month||',0)+COALESCE(month_money_'||third_month||',0) as money,status_'||third_month||'
+		from gather_service.ir_meituan_shop_china_2019  where '||areaid||'='||id||' AND status_'||third_month||' =1 
+		UNION
+		select shop_id,shop_name,''百度糯米'' as platform,main_cat,first_cat,''流通型'' as shop_type,url,address,first_addr,second_addr,third_addr,cast(first_areaid as int4),cast(second_areaid as int4),cast(third_areaid as int4),COALESCE('||first_month||',0)+COALESCE('||second_month||',0)+COALESCE(month_money_'||third_month||',0) as money,status_'||third_month||'
+		from gather_service.ir_nuomi_shop_china_2019 where '||areaid||'='''||id||''' AND status_'||third_month||' =1
+		UNION
+		select cast(shop_id as varchar),shop_name,''大众点评'' as platform,main_cat,first_cat,''流通型'' as shop_type,url,address,first_addr,second_addr,third_addr,first_areaid,second_areaid,third_areaid,COALESCE('||first_month||',0)+COALESCE('||second_month||',0)+COALESCE(month_money_'||third_month||',0) as money,status_'||third_month||'
+		from gather_service.ir_dianping_shop_china_2019 where '||areaid||'='''||id||''' AND status_'||third_month||' =1  
+		and (COALESCE(month_money_'||first_month||',0)+COALESCE(month_money_'||second_month||',0)+COALESCE(month_money_'||third_month||',0))>0';
+		execute mysql;
+
+		--插入外卖平台  -- 有问题 status_06
+
+
+						mysql:= 'insert into '||quote_ident(table_name)||'
+		(shop_id,shop_name,platform,main_cat,first_cat,shop_type,url,address,first_addr,second_addr,third_addr,first_areaid,second_areaid,third_areaid,trade_level)
+		select shop_id,shop_name,''饿了么星选'' as platform,main_cat,''在线餐饮'',''流通型'' as shop_type,url,address,first_addr,second_addr,third_addr,
+		first_areaid ,second_areaid ,third_areaid ,COALESCE(month_money_'||first_month||',0)+COALESCE(month_money_'||second_month||',0)+COALESCE(month_money_'||third_month||',0) as money
+		from gather_service.ir_baidu_waimai_shop_china_2019 where '||areaid||'='''||id||''''; 
+
+
+		execute mysql;
+		mysql:= 'insert into '||quote_ident(table_name)||'
+		(shop_name,platform,first_cat,shop_type,address,first_addr,second_addr,third_addr,first_areaid,second_areaid,third_areaid)
+		select name,''饿了么'' as platform,''在线餐饮'',''流通型'' as shop_type,address,first_addr,second_addr,
+		third_addr,cast(first_areaid as int4),cast(second_areaid as  int4),cast(third_areaid as int4)
+		from analysis_business_list.ele_waimai_dx  where '||areaid||'='''||id||'''';
+		execute mysql;
+
+			mysql:= 'insert into '||quote_ident(table_name)||'
+		(shop_name,platform,first_cat,shop_type,url,first_addr,second_addr,third_addr,first_areaid,second_areaid,third_areaid,trade_level,status)
+		select name,''美团外卖'' as platform,''在线餐饮'',''流通型'' as shop_type,url,first_addr,second_addr,third_addr,
+		cast(first_areaid as int4),cast(second_areaid as int4),cast(third_areaid as int4),0,1
+		from analysis_business_list.meituan_waimai_unique where '||areaid||'='''||id||'''';
+		execute mysql;
+		--插入服务型酒店
+		 mysql:= 'insert into '||quote_ident(table_name)||'
+		(shop_id,shop_name,platform,main_cat,first_cat,shop_type,url,address,first_addr,second_addr,third_addr,first_areaid,second_areaid,third_areaid,trade_level,status)
+		select  prod_id,prod_name,''途家酒店'',''在线旅游'',''酒店'',''流通型'',url,address,first_addr,second_addr,third_addr,first_areaid,second_areaid,third_areaid,COALESCE(month_commentnum_'||third_month||',0),status_'||third_month||' 
+		from "gather_service"."ir_tujia_hotel_china_2019"  where '||areaid||'='''||id||''' AND status_'||third_month||' = 1  UNION
+		select  prod_id,prod_name,''去哪儿酒店'',''在线旅游'',''酒店'',''流通型'',url,address,first_addr,second_addr,third_addr,first_areaid,second_areaid,third_areaid,COALESCE(month_commentnum_'||third_month||',0),status_'||third_month||' 
+		from "gather_service"."ir_qunaer_hotel_china_2019" where '||areaid||'='''||id||''' AND status_'||third_month||' = 1 UNION
+		select  prod_id,prod_name,''携程酒店'',''在线旅游'',''酒店'',''流通型'',url,address,first_addr,second_addr,third_addr,first_areaid,second_areaid,third_areaid,COALESCE(month_commentnum_'||third_month||',0),status_'||third_month||' 
+		from "gather_service"."ir_xiecheng_hotel_china_2019" where '||areaid||'='''||id||''' AND status_'||third_month||' = 1 UNION
+		select  prod_id,prod_name,''同程酒店'',''在线旅游'',''酒店'',''流通型'',url,address,first_addr,second_addr,third_addr,first_areaid,second_areaid,third_areaid,COALESCE(month_commentnum_'||third_month||',0),status_'||third_month||' 
+		from "gather_service"."ir_ly_hotel_china_2019" where '||areaid||'='''||id||''' AND status_'||third_month||' = 1 UNION
+		select  prod_id,prod_name,''欣欣酒店'',''在线旅游'',''酒店'',''流通型'',url,address,first_addr,second_addr,third_addr,first_areaid,second_areaid,third_areaid,COALESCE(month_commentnum_'||third_month||',0),status_'||third_month||' 
+		from "gather_service"."ir_cncn_hotel_china_2019" where '||areaid||'='''||id||''' AND status_'||third_month||' = 1';
+     execute mysql;
+
+
+		--停抓酒店平台(选取了本次抓取）
+		--马蜂窝状态用status_06=1
+		--艺龙，途牛，阿里酒店状态用state=1
+     mysql:= 'insert into '||quote_ident(table_name)||'
+		(shop_id,shop_name,platform,main_cat,first_cat,shop_type,url,address,first_addr,second_addr,third_addr,first_areaid,second_areaid,
+		third_areaid,trade_level,status)
+		select  shop_id,prod_name,''马蜂窝酒店'',''在线旅游'',''酒店'',''流通型'',url,address,first_addr,second_addr,third_addr,
+		cast(first_areaid as int4),cast(second_areaid as int4),cast(third_areaid as int4),month_commentnum_05,
+		cast(state as int2)  from "gather_service"."ir_mafengwo_product_china_2016_list" where '||areaid||'='''||id||''' and state=''1''
+		union
+		select  shop_id,name,''艺龙酒店'',''在线旅游'',''酒店'',''流通型'',url,address,first_addr,second_addr,third_addr,cast(first_areaid as int4),
+		cast(second_areaid as int4),cast(third_areaid as int4),COALESCE(cast("08_amount" as NUMERIC),0)/120,cast(state as int2) 
+		from "gather_service"."ir_elong_hotel_2016_list" where '||areaid||'='''||id||'''
+		union
+		select  shop_id,name,''途牛酒店'',''在线旅游'',''酒店'',''流通型'',url,address,first_addr,second_addr,third_addr,cast(first_areaid as int4),
+		cast(second_areaid as int4),cast(third_areaid as int4),com_num_05,cast(state as int2) 
+		from "gather_service"."ir_tuniuticket_product_2016_list" where '||areaid||'='''||id||''' and state=''1''
+		union
+		select  shop_id,name,''飞猪酒店'',''在线旅游'',''酒店'',''流通型'',url,address,first_addr,second_addr,third_addr,
+		cast(first_areaid as int4),cast(second_areaid as int4),cast(third_areaid as int4),cast("08_sellnum" as numeric),
+		cast(state as int2) from "gather_service"."ir_ali_hotel_2016_list" where '||areaid||'='''||id||''' and state=''1''';
+				execute mysql;
+
+		--停抓其他服务平台(选取全部）
+
+		 mysql:= 'insert into '||quote_ident(table_name)||'
+		(shop_id,shop_name,platform,main_cat,first_cat,shop_type,url,address,first_addr,second_addr,third_addr,first_areaid,second_areaid,third_areaid,trade_level,status)
+		select  shop_id,name,''一品威客'',ability1,''其他服务'',''服务型'',url,address,first_addr,second_addr,third_addr,
+		cast(first_areaid as int4),cast(second_areaid as int4),cast(third_areaid as int4),month_amount_08,
+		cast(state as int2) from "gather_service"."ir_epwk_shop_china_2016_list" 
+		where '||areaid||'='''||id||''' AND state = ''1''
+		union
+		select  shop_id,name,''时间财富'',ability1,''其他服务'',''服务型'',url,address,first_addr,second_addr,third_addr,
+		cast(first_areaid as int4),cast(second_areaid as int4),cast(third_areaid as int4),total_amount,
+		cast(state as int2) from "gather_service"."ir_sjcf_shop_china_2016_list"
+		where  '||areaid||'='''||id||'''';
+				execute mysql;
+
+		-- 插入平台型数据 --表要改
+			mysql:= 'insert into '||quote_ident(table_name)||'
+		(shop_id,shop_name,platform,main_cat,first_cat,shop_type,url,address,first_addr,second_addr,third_addr,first_areaid,second_areaid,third_areaid,trade_level,status)
+		select id,name,name,main_cat,first_cat,''平台型'' as shop_type,url,address,first_addr,second_addr,third_addr,
+		cast(first_areaid as int4),cast(second_areaid as int4),cast(third_areaid as int4),cast(pv as decimal),cast(status as int2) 
+		from gather_kind.ir_platform_2019 where '||areaid||'='''||id||''' and status=''1''';
+		execute mysql;
+END;
+$BODY$
+  LANGUAGE 'plpgsql' VOLATILE COST 100
+;
+
+ALTER FUNCTION "analysis_business_list"."business_list_area_v1"(id varchar, label int4, q int4) OWNER TO "yanghai";
